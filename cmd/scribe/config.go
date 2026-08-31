@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,38 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage Scribe configuration",
+}
+
+var configShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Shows current config if any",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// action to be taken, in this case account for no file returned, or return the file.
+		//1. print current active config source file
+
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to find home directory: %w", err)
+		}
+
+		configPath := filepath.Join(home, configFileName) // full file name now at this location using const in init.go
+
+		fmt.Printf("using config file at path:%s\n", configPath) //Print config path
+		//now get open config file itself
+
+		file, err := os.ReadFile(configPath)
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(cmd.OutOrStdout(), " No config file at %s. Run 'scribe init' to create one.\n", configPath)
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("Failed to read file at path\n%s,  %w", configPath, err)
+		}
+		fmt.Print("\n", string(file)) //Return config of file found at path.
+
+		return nil
+	},
 }
 
 var configSetCmd = &cobra.Command{
@@ -91,4 +124,5 @@ func apiKeyFormatWarning(provider, value string) string {
 func init() {
 	configCmd.AddCommand(configSetCmd)
 	rootCmd.AddCommand(configCmd)
+	configCmd.AddCommand(configShowCmd)
 }
