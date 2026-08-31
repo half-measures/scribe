@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 var configCmd = &cobra.Command{
@@ -42,7 +43,20 @@ var configShowCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("Failed to read file at path\n%s,  %w", configPath, err)
 		}
-		fmt.Print("\n", string(file)) //Return config of file found at path.
+		//mask the
+		var raw map[string]any
+		if err := yaml.Unmarshal(file, &raw); err != nil {
+			return fmt.Errorf("parse config %s: %w", configPath, err)
+		}
+		if k, ok := raw["api_key"].(string); ok && k != "" {
+			raw["api_key"] = maskSecret(k)
+		}
+		out, err := yaml.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("render config %s: %w", configPath, err)
+		}
+
+		fmt.Print("\n", string(out)) //Return config of file found at path.
 
 		return nil
 	},
@@ -119,6 +133,31 @@ func apiKeyFormatWarning(provider, value string) string {
 		return ""
 	}
 	return fmt.Sprintf("⚠ Warning: %s API keys usually start with %q — double-check this value", provider, prefix)
+}
+
+// maskSecret redacts a secret for display. It keeps the documented provider
+// prefix (so you can still tell an OpenAI key from an Anthropic one) and the
+// last few characters (so you can confirm which key is configured), and stars
+// out everything in between. Current helper function for the above config show command.
+func maskSecret(s string) string {
+	const keep = 4
+
+	if len(s) <= keep {
+		return strings.Repeat("*", len(s))
+	}
+
+	// Longest matching known prefix wins, e.g. "sk-ant-" over "sk-".
+	prefix := ""
+	for _, p := range apiKeyPrefixes {
+		if strings.HasPrefix(s, p) && len(p) > len(prefix) {
+			prefix = p
+		}
+	}
+	if len(prefix)+keep >= len(s) {
+		prefix = ""
+	}
+
+	return prefix + strings.Repeat("*", len(s)-len(prefix)-keep) + s[len(s)-keep:]
 }
 
 func init() {
