@@ -22,41 +22,33 @@ var configShowCmd = &cobra.Command{
 	Short: "Shows current config if any",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// action to be taken, in this case account for no file returned, or return the file.
-		//1. print current active config source file
-
-		home, err := os.UserHomeDir()
+		configPath, err := configFilePath()
 		if err != nil {
-			return fmt.Errorf("failed to find home directory: %w", err)
+			return err
 		}
 
-		configPath := filepath.Join(home, configFileName) // full file name now at this location using const in init.go
-
-		fmt.Printf("using config file at path:%s\n", configPath) //Print config path
-		//now get open config file itself
-
-		file, err := os.ReadFile(configPath)
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(cmd.OutOrStdout(), " No config file at %s. Run 'scribe init' to create one.\n", configPath)
+		// loadRawConfig reports a missing file as a nil map, not an error.
+		raw, err := loadRawConfig(configPath)
+		if err != nil {
+			return err
+		}
+		if raw == nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "No config file at %s. Run 'scribe init' to create one.\n", configPath)
 			return nil
 		}
-		if err != nil {
-			return fmt.Errorf("Failed to read file at path\n%s,  %w", configPath, err)
-		}
-		//mask the
-		var raw map[string]any
-		if err := yaml.Unmarshal(file, &raw); err != nil {
-			return fmt.Errorf("parse config %s: %w", configPath, err)
-		}
+
+		// Never print the real key: masking is a display concern, so it happens
+		// here rather than in loadRawConfig, which other callers rely on.
 		if k, ok := raw["api_key"].(string); ok && k != "" {
 			raw["api_key"] = maskSecret(k)
 		}
+
 		out, err := yaml.Marshal(raw)
 		if err != nil {
 			return fmt.Errorf("render config %s: %w", configPath, err)
 		}
 
-		fmt.Print("\n", string(out)) //Return config of file found at path.
+		fmt.Fprintf(cmd.OutOrStdout(), "using config file at path: %s\n\n%s", configPath, out)
 
 		return nil
 	},
@@ -164,4 +156,29 @@ func init() {
 	configCmd.AddCommand(configSetCmd)
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configShowCmd)
+}
+
+func loadRawConfig(path string) (map[string]any, error) {
+	//helper function to read and parse config file, returns nil map and nil err if file not existing
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read nconfig %s: %w", path, err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return raw, nil
+}
+
+// helper function to return path to a users config file
+func configFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to find home directory: %w", err)
+	}
+	return filepath.Join(home, configFileName), nil
 }
