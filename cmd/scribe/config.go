@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,11 +9,49 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage Scribe configuration",
+}
+
+var configShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Shows current config if any",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		configPath, err := configFilePath()
+		if err != nil {
+			return err
+		}
+
+		// loadRawConfig reports a missing file as a nil map, not an error.
+		raw, err := loadRawConfig(configPath)
+		if err != nil {
+			return err
+		}
+		if raw == nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "No config file at %s. Run 'scribe init' to create one.\n", configPath)
+			return nil
+		}
+
+		// Never print the real key: masking is a display concern, so it happens
+		// here rather than in loadRawConfig, which other callers rely on.
+		if k, ok := raw["api_key"].(string); ok && k != "" {
+			raw["api_key"] = maskSecret(k)
+		}
+
+		out, err := yaml.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("render config %s: %w", configPath, err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "using config file at path: %s\n\n%s", configPath, out)
+
+		return nil
+	},
 }
 
 var configSetCmd = &cobra.Command{
@@ -88,7 +127,58 @@ func apiKeyFormatWarning(provider, value string) string {
 	return fmt.Sprintf("⚠ Warning: %s API keys usually start with %q — double-check this value", provider, prefix)
 }
 
+// maskSecret redacts a secret for display. It keeps the documented provider
+// prefix (so you can still tell an OpenAI key from an Anthropic one) and the
+// last few characters (so you can confirm which key is configured), and stars
+// out everything in between. Current helper function for the above config show command.
+func maskSecret(s string) string {
+	const keep = 4
+
+	if len(s) <= keep {
+		return strings.Repeat("*", len(s))
+	}
+
+	// Longest matching known prefix wins, e.g. "sk-ant-" over "sk-".
+	prefix := ""
+	for _, p := range apiKeyPrefixes {
+		if strings.HasPrefix(s, p) && len(p) > len(prefix) {
+			prefix = p
+		}
+	}
+	if len(prefix)+keep >= len(s) {
+		prefix = ""
+	}
+
+	return prefix + strings.Repeat("*", len(s)-len(prefix)-keep) + s[len(s)-keep:]
+}
+
 func init() {
 	configCmd.AddCommand(configSetCmd)
 	rootCmd.AddCommand(configCmd)
+	configCmd.AddCommand(configShowCmd)
+}
+
+func loadRawConfig(path string) (map[string]any, error) {
+	//helper function to read and parse config file, returns nil map and nil err if file not existing
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return raw, nil
+}
+
+// helper function to return path to a users config file
+func configFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to find home directory: %w", err)
+	}
+	return filepath.Join(home, configFileName), nil
 }
