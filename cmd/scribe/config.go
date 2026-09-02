@@ -165,7 +165,7 @@ func loadRawConfig(path string) (map[string]any, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read nconfig %s: %w", path, err)
+		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
