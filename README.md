@@ -95,6 +95,10 @@ Common settings:
 ```bash
 git add .
 scribe generate
+
+# Display help and available commands
+scribe --help
+scribe config --help
 ```
 
 ## Git Hook Integration
